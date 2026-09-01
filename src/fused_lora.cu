@@ -85,16 +85,21 @@ __global__ void fused_lora_kernel(
 }
 
 // Template specializations for rank 8, 16, 32, 64.
-// Explicit instantiations ensure the compiler allocates exactly RANK registers
-// for acc_a and fully unrolls the epilogue and inner A*x loops.
+// Per-rank TILE_K tuning:
+//   rank 8,16  -> TILE_K=128: sA is only 8*128=1024 or 16*128=2048 bytes; wide tiles
+//                              amortize W load overhead better.
+//   rank 32,64 -> TILE_K=64:  sA is 32*64=2048 or 64*64=4096 bytes; stay under
+//                              shared memory budget (L1 stays hot for sx).
+// __launch_bounds__ tells the compiler the maximum threads per block so it can
+// minimize register spill for the acc_a[RANK] array.
 
-template __global__ void fused_lora_kernel<8,  64, 128>(
+template __global__ __launch_bounds__(128) void fused_lora_kernel<8,  128, 128>(
     const __half*, const __half*, const __half*, const __half*, __half*, int, int, float);
-template __global__ void fused_lora_kernel<16, 64, 128>(
+template __global__ __launch_bounds__(128) void fused_lora_kernel<16, 128, 128>(
     const __half*, const __half*, const __half*, const __half*, __half*, int, int, float);
-template __global__ void fused_lora_kernel<32, 64, 128>(
+template __global__ __launch_bounds__(128) void fused_lora_kernel<32, 64, 128>(
     const __half*, const __half*, const __half*, const __half*, __half*, int, int, float);
-template __global__ void fused_lora_kernel<64, 64, 128>(
+template __global__ __launch_bounds__(128) void fused_lora_kernel<64, 64, 128>(
     const __half*, const __half*, const __half*, const __half*, __half*, int, int, float);
 
 void launch_fused_lora(
@@ -105,7 +110,6 @@ void launch_fused_lora(
     int adapter_id,
     cudaStream_t stream)
 {
-    constexpr int TILE_K = 64;
     constexpr int TILE_ROWS = 128;
     const int grid = (cfg.d_out + TILE_ROWS - 1) / TILE_ROWS;
 
@@ -114,24 +118,23 @@ void launch_fused_lora(
 
     switch (cfg.rank) {
         case 8:
-            fused_lora_kernel<8,  TILE_K, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
+            fused_lora_kernel<8,  128, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
                 weights.W, A, B, x, y, cfg.d_out, cfg.d_in, cfg.alpha);
             break;
         case 16:
-            fused_lora_kernel<16, TILE_K, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
+            fused_lora_kernel<16, 128, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
                 weights.W, A, B, x, y, cfg.d_out, cfg.d_in, cfg.alpha);
             break;
         case 32:
-            fused_lora_kernel<32, TILE_K, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
+            fused_lora_kernel<32, 64, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
                 weights.W, A, B, x, y, cfg.d_out, cfg.d_in, cfg.alpha);
             break;
         case 64:
-            fused_lora_kernel<64, TILE_K, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
+            fused_lora_kernel<64, 64, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
                 weights.W, A, B, x, y, cfg.d_out, cfg.d_in, cfg.alpha);
             break;
         default:
-            // Fallback: treat as rank 64 with masking (never triggered for valid configs)
-            fused_lora_kernel<64, TILE_K, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
+            fused_lora_kernel<64, 64, TILE_ROWS><<<grid, TILE_ROWS, 0, stream>>>(
                 weights.W, A, B, x, y, cfg.d_out, cfg.d_in, cfg.alpha);
             break;
     }
