@@ -40,7 +40,7 @@ set_target_properties(test_correctness PROPERTIES
 
 # Latency benchmark
 add_executable(bench_latency benchmarks/bench_latency.cu)
-target_link_libraries(bench_latency PRIVATE lora_fuse)
+target_link_libraries(bench_latency PRIVATE lora_fuse curand)
 target_include_directories(bench_latency PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
