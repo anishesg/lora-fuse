@@ -30,7 +30,7 @@ set_target_properties(lora_fuse PROPERTIES
 
 # Correctness test
 add_executable(test_correctness tests/test_correctness.cu)
-target_link_libraries(test_correctness PRIVATE lora_fuse)
+target_link_libraries(test_correctness PRIVATE lora_fuse curand)
 target_include_directories(test_correctness PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
